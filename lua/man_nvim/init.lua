@@ -31,6 +31,8 @@ local function command_args(item)
   return { item.target_section or item.section, item.target_name or item.name }
 end
 
+local function systemlist(command) return vim.fn.systemlist(command or M.apropos_cmd) end
+
 M.section_label = function(section)
   local name = section_names[(section or ''):match('^(%d+)')]
   return name and ('%s %s'):format(section, name) or section or ''
@@ -114,47 +116,13 @@ M.open_man = function(item, modifier)
   local command = M.make_man_command(item, modifier)
   if not command then return end
 
-  local pick = require('mini.pick')
-  local state = pick.get_picker_state()
-  local target = state and state.windows and state.windows.target
-
   vim.schedule(function()
-    local man_window
-    local open = function()
-      vim.cmd(command)
-      man_window = vim.api.nvim_get_current_win()
-    end
-
-    if target and vim.api.nvim_win_is_valid(target) then
-      vim.api.nvim_win_call(target, open)
-    else
-      open()
-    end
-
-    if man_window and vim.api.nvim_win_is_valid(man_window) then
-      vim.api.nvim_set_current_win(man_window)
-    end
+    vim.cmd(command)
+    vim.api.nvim_set_current_win(vim.api.nvim_get_current_win())
   end)
 end
 
-M.get_apropos = function(on_response, command)
-  if not vim.system then error('man.nvim requires Neovim with vim.system()') end
-  on_response = on_response or function() end
-
-  return vim.system(
-    command or M.apropos_cmd,
-    { text = true },
-    vim.schedule_wrap(function(result)
-      local stdout = result.stdout or ''
-      if result.code ~= 0 and stdout == '' then
-        on_response(trim(result.stderr), '')
-        return
-      end
-
-      on_response(nil, stdout)
-    end)
-  )
-end
+M.get_apropos_items = function(command) return M.make_items(systemlist(command)) end
 
 M.preview = function(bufnr, item)
   if not item then return end
@@ -183,55 +151,60 @@ M.preview = function(bufnr, item)
   set_buffer_lines(bufnr, lines)
 end
 
-M.picker = function(local_opts, opts)
-  local_opts, opts = local_opts or {}, vim.deepcopy(opts or {})
+M.entry_maker = function(item) return { value = item, display = item.text, ordinal = item.text } end
 
-  local pick = require('mini.pick')
-  local choose = function(item, modifier)
-    if item then M.open_man(item, modifier or default_man_modifier) end
+M.picker = function(_, opts)
+  opts = vim.deepcopy(opts or {})
+
+  local action_state = require('telescope.actions.state')
+  local actions = require('telescope.actions')
+  local conf = require('telescope.config').values
+  local finders = require('telescope.finders')
+  local pickers = require('telescope.pickers')
+  local previewers = require('telescope.previewers')
+
+  local choose = function(prompt_bufnr, modifier)
+    local entry = action_state.get_selected_entry()
+    actions.close(prompt_bufnr)
+    if entry then M.open_man(entry.value, modifier or default_man_modifier) end
   end
-  local map_open = function(char, modifier)
-    return {
-      char = char,
-      func = function()
-        choose(pick.get_picker_matches().current, modifier)
-        return true
-      end,
-    }
+
+  local attach_mappings = function(prompt_bufnr, map)
+    actions.select_default:replace(function() choose(prompt_bufnr) end)
+
+    vim
+      .iter({
+        { '<C-x>', '' },
+        { '<C-v>', 'vertical ' },
+        { '<C-t>', 'tab ' },
+      })
+      :each(function(spec)
+        local lhs, modifier = spec[1], spec[2]
+        local action = function() choose(prompt_bufnr, modifier) end
+        map('i', lhs, action)
+        map('n', lhs, action)
+      end)
+
+    return true
   end
 
-  opts = vim.tbl_deep_extend('force', {
-    mappings = {
-      choose_in_split = '',
-      choose_in_tabpage = '',
-      choose_in_vsplit = '',
-      mark = '<M-x>',
-      open_in_split = map_open('<C-x>', ''),
-      open_in_tabpage = map_open('<C-t>', 'tab '),
-      open_in_vsplit = map_open('<C-v>', 'vertical '),
-    },
-    source = {
-      name = 'Man pages',
-      items = function()
-        M.get_apropos(function(err, body)
-          if err then
-            vim.notify('Failed to load man apropos database: ' .. err, vim.log.levels.ERROR)
-            if pick.is_picker_active() then pick.set_picker_items({}) end
-            return
-          end
-
-          local lines = vim.split(body, '\n', { plain = true, trimempty = true })
-          if pick.is_picker_active() then pick.set_picker_items(M.make_items(lines)) end
-        end, local_opts.apropos_cmd)
-      end,
-      preview = M.preview,
-      choose = choose,
-    },
-  }, opts)
-
-  return pick.start(opts)
+  return pickers
+    .new(opts, {
+      prompt_title = 'Man pages',
+      finder = finders.new_table({
+        results = M.get_apropos_items(opts.apropos_cmd),
+        entry_maker = opts.entry_maker or M.entry_maker,
+      }),
+      previewer = previewers.new_buffer_previewer({
+        title = opts.preview_title or 'Man page',
+        define_preview = function(self, entry) M.preview(self.state.bufnr, entry and entry.value) end,
+      }),
+      sorter = conf.generic_sorter(opts),
+      attach_mappings = attach_mappings,
+    })
+    :find()
 end
 
-M.setup = function() require('mini.pick').registry.man = M.picker end
+M.setup = function() require('telescope').load_extension('man') end
 
 return M

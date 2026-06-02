@@ -5,29 +5,38 @@ local eq = assert.are.same
 local isnil = assert.is.Nil
 
 describe('man.nvim plugin', function()
-  it('parses a single apropos entry', function()
-    eq({
-      aliases = { { name = 'printf', section = '1', ref = 'printf(1)' } },
-      description = 'formatted output',
-      primary = { name = 'printf', section = '1', ref = 'printf(1)' },
-    }, man_nvim.parse_line('printf(1)                - formatted output'))
-  end)
+  it(
+    'parses a single apropos entry',
+    function()
+      eq({
+        aliases = { { name = 'printf', section = '1', ref = 'printf(1)' } },
+        description = 'formatted output',
+        primary = { name = 'printf', section = '1', ref = 'printf(1)' },
+      }, man_nvim.parse_line('printf(1)                - formatted output'))
+    end
+  )
 
-  it('parses aliases from one apropos entry', function()
-    eq({
-      aliases = {
-        { name = 'builtin', section = '1', ref = 'builtin(1)' },
-        { name = '!', section = '1', ref = '!(1)' },
-        { name = '[', section = '1', ref = '[(1)' },
-      },
-      description = 'shell built-in commands',
-      primary = { name = 'builtin', section = '1', ref = 'builtin(1)' },
-    }, man_nvim.parse_line('builtin(1), !(1), [(1) - shell built-in commands'))
-  end)
+  it(
+    'parses aliases from one apropos entry',
+    function()
+      eq({
+        aliases = {
+          { name = 'builtin', section = '1', ref = 'builtin(1)' },
+          { name = '!', section = '1', ref = '!(1)' },
+          { name = '[', section = '1', ref = '[(1)' },
+        },
+        description = 'shell built-in commands',
+        primary = { name = 'builtin', section = '1', ref = 'builtin(1)' },
+      }, man_nvim.parse_line('builtin(1), !(1), [(1) - shell built-in commands'))
+    end
+  )
 
-  it('returns nil for non-apropos noise', function()
-    isnil(man_nvim.parse_line('makewhatis: /usr/share/man/foo.1: No such file or directory'))
-  end)
+  it(
+    'returns nil for non-apropos noise',
+    function()
+      isnil(man_nvim.parse_line('makewhatis: /usr/share/man/foo.1: No such file or directory'))
+    end
+  )
 
   it('turns apropos output into section-grouped picker items', function()
     local items = man_nvim.make_items({
@@ -38,9 +47,7 @@ describe('man.nvim plugin', function()
 
     eq(
       { 'printf(1)', 'printf(3)', 'xprintf(5)' },
-      vim.tbl_map(function(item)
-        return item.ref
-      end, items)
+      vim.tbl_map(function(item) return item.ref end, items)
     )
     eq('[1 User commands] printf(1) - formatted output command', items[1].text)
   end)
@@ -54,9 +61,7 @@ describe('man.nvim plugin', function()
         { ref = '%(1)', target_ref = 'builtin(1)' },
         { ref = 'builtin(1)', target_ref = 'builtin(1)' },
       },
-      vim.tbl_map(function(item)
-        return { ref = item.ref, target_ref = item.target_ref }
-      end, items)
+      vim.tbl_map(function(item) return { ref = item.ref, target_ref = item.target_ref } end, items)
     )
   end)
 
@@ -69,8 +74,8 @@ describe('man.nvim plugin', function()
     eq('vertical Man 1 builtin', man_nvim.make_man_command(alias, 'vertical '))
   end)
 
-  it('registers the mini.pick picker', function()
+  it('registers the Telescope extension', function()
     man_nvim.setup()
-    eq(man_nvim.picker, require('mini.pick').registry.man)
+    eq(man_nvim.picker, require('telescope').extensions.man.man)
   end)
 end)
