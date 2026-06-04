@@ -4,6 +4,20 @@ local man_nvim = require('man_nvim')
 local eq = assert.are.same
 local isnil = assert.is.Nil
 
+local function with_options(options, fn)
+  local original = {}
+  for name, value in pairs(options) do
+    original[name] = vim.o[name]
+    vim.o[name] = value
+  end
+
+  local ok, err = pcall(fn)
+  for name, value in pairs(original) do
+    vim.o[name] = value
+  end
+  if not ok then error(err) end
+end
+
 describe('man.nvim plugin', function()
   it(
     'parses a single apropos entry',
@@ -72,6 +86,49 @@ describe('man.nvim plugin', function()
     eq('Man 3 printf', man_nvim.make_man_command(item))
     eq('vertical Man 3 printf', man_nvim.make_man_command(item, 'vertical '))
     eq('vertical Man 1 builtin', man_nvim.make_man_command(alias, 'vertical '))
+  end)
+
+  it('parses negative filter terms from Telescope prompts', function()
+    eq({
+      positive_prompt = 'format output',
+      negatives = { 'tcl', 'tk' },
+    }, man_nvim.parse_filter_prompt('format -tcl output -tk'))
+
+    eq({
+      positive_prompt = '',
+      negatives = { 'tcl' },
+    }, man_nvim.parse_filter_prompt('-tcl'))
+  end)
+
+  it('filters multiple negative Telescope prompt terms', function()
+    eq(true, man_nvim.matches_filter_prompt('format(1) - file formatter', 'format -tcl -tk'))
+    eq(false, man_nvim.matches_filter_prompt('format(ntcl) - tcl format', 'format -tcl -tk'))
+    eq(false, man_nvim.matches_filter_prompt('format(tk) - tk format', 'format -tcl -tk'))
+  end)
+
+  it('smartcases negative Telescope prompt terms', function()
+    with_options({ ignorecase = true, smartcase = true }, function()
+      eq(false, man_nvim.matches_filter_prompt('format(ntcl) - Tcl format', 'format -tcl'))
+      eq(false, man_nvim.matches_filter_prompt('format(n) - tcl format', 'format -tcl'))
+      eq(false, man_nvim.matches_filter_prompt('format(ntcl) - Tcl format', 'format -Tcl'))
+      eq(true, man_nvim.matches_filter_prompt('format(n) - tcl format', 'format -Tcl'))
+    end)
+  end)
+
+  it('delegates Telescope sorting with only positive prompt terms', function()
+    local seen_prompt
+    local sorter = man_nvim.filter_sorter({
+      scoring_function = function(_, prompt)
+        seen_prompt = prompt
+        return 1
+      end,
+      highlighter = function(_, prompt) return { prompt } end,
+    })
+
+    eq(1, sorter:scoring_function('format -tcl output', 'format(1) - output'))
+    eq('format output', seen_prompt)
+    eq({ 'format output' }, sorter:highlighter('format -tcl output', 'format(1) - output'))
+    eq(-1, sorter:scoring_function('format -tcl output', 'format(ntcl) - tcl output'))
   end)
 
   it('registers the Telescope extension', function()

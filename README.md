@@ -15,7 +15,7 @@ require('man_nvim').setup()
 :Telescope man
 ```
 
-Entries come from `apropos .`, are sorted by man section, and keep section labels in the searchable text. Use queries like `3 printf` to narrow by section and name.
+Entries come from `apropos .`, are sorted by man section, and keep section labels in the searchable text. Use queries like `3 printf` to narrow by section and name. Prefix a prompt term with `-` to exclude matches, like `format -tcl` or `format -tcl -tk`; excluded terms follow smartcase.
 
 Telescope mappings:
 

@@ -15,6 +15,21 @@ local section_names = {
 local default_man_modifier = 'vertical '
 local function trim(s) return vim.trim(s or '') end
 
+local function query_uses_ignorecase(query)
+  if not vim.o.ignorecase then return false end
+  if not vim.o.smartcase then return true end
+
+  return query == vim.fn.tolower(query)
+end
+
+local function contains_filter_term(text, term)
+  if query_uses_ignorecase(term) then
+    return vim.fn.tolower(text):find(vim.fn.tolower(term), 1, true) ~= nil
+  end
+
+  return text:find(term, 1, true) ~= nil
+end
+
 local function set_buffer_lines(bufnr, lines)
   if not vim.api.nvim_buf_is_valid(bufnr) then return end
 
@@ -112,6 +127,46 @@ M.make_man_command = function(item, modifier)
   return ('%sMan %s'):format(modifier or '', table.concat(args, ' '))
 end
 
+M.parse_filter_prompt = function(prompt)
+  local positives, negatives = setmetatable({}, { __index = table }), {}
+  for token in (prompt or ''):gmatch('%S+') do
+    if token:sub(1, 1) == '-' and token:len() > 1 then
+      negatives[#negatives + 1] = token:sub(2)
+    else
+      positives:insert(token)
+    end
+  end
+
+  return { positive_prompt = positives:concat(' '), negatives = negatives }
+end
+
+M.matches_filter_prompt = function(text, prompt)
+  local parsed = M.parse_filter_prompt(prompt)
+  return not vim
+    .iter(parsed.negatives)
+    :any(function(term) return contains_filter_term(text, term) end)
+end
+
+M.filter_sorter = function(sorter)
+  local Sorter = require('telescope.sorters').Sorter
+  local opts = {
+    scoring_function = function(_, prompt, line, entry, cb_add, cb_filter)
+      local parsed = M.parse_filter_prompt(prompt)
+      if not M.matches_filter_prompt(line, prompt) then return -1 end
+      return sorter:scoring_function(parsed.positive_prompt, line, entry, cb_add, cb_filter)
+    end,
+  }
+
+  if sorter.highlighter then
+    opts.highlighter = function(_, prompt, display)
+      local parsed = M.parse_filter_prompt(prompt)
+      return sorter:highlighter(parsed.positive_prompt, display)
+    end
+  end
+
+  return Sorter:new(opts)
+end
+
 M.open_man = function(item, modifier)
   local command = M.make_man_command(item, modifier)
   if not command then return end
@@ -199,7 +254,7 @@ M.picker = function(_, opts)
         title = opts.preview_title or 'Man page',
         define_preview = function(self, entry) M.preview(self.state.bufnr, entry and entry.value) end,
       }),
-      sorter = conf.generic_sorter(opts),
+      sorter = M.filter_sorter(opts.sorter or conf.generic_sorter(opts)),
       attach_mappings = attach_mappings,
     })
     :find()
