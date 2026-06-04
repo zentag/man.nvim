@@ -15,6 +15,20 @@ local section_names = {
 local default_man_modifier = 'vertical '
 local function trim(s) return vim.trim(s or '') end
 
+local function prompt_chars(prompt) return vim.fn.split(prompt, [[\zs]]) end
+
+local function query_text(query) return table.concat(query or {}) end
+
+local function query_uses_ignorecase(query)
+  if not vim.o.ignorecase then return false end
+  if not vim.o.smartcase then return true end
+
+  local prompt = query_text(query)
+  return prompt == vim.fn.tolower(prompt)
+end
+
+local function lower_list(list) return vim.iter(list):map(vim.fn.tolower):totable() end
+
 local function set_buffer_lines(bufnr, lines)
   if not vim.api.nvim_buf_is_valid(bufnr) then return end
 
@@ -108,6 +122,67 @@ M.make_man_command = function(item, modifier)
 
   local args = vim.iter(command_args(item)):map(vim.fn.fnameescape):totable()
   return ('%sMan %s'):format(modifier or '', table.concat(args, ' '))
+end
+
+M.parse_filter_query = function(query)
+  local positives, negatives = setmetatable({}, { __index = table }), {}
+  for token in query_text(query):gmatch('%S+') do
+    if token:sub(1, 1) == '-' and token:len() > 1 then
+      negatives[#negatives + 1] = token:sub(2)
+    else
+      positives:insert(token)
+    end
+  end
+
+  local positive_query = setmetatable({}, { __index = table })
+  for i, token in ipairs(positives) do
+    if i > 1 then positive_query:insert(' ') end
+    vim.iter(prompt_chars(token)):each(function(char) positive_query:insert(char) end)
+  end
+
+  return { positive_query = positive_query, negatives = negatives }
+end
+
+M.match = function(stritems, inds, query)
+  local pick = require('mini.pick')
+  local parsed = M.parse_filter_query(query)
+  if #parsed.negatives == 0 then return pick.default_match(stritems, inds, query) end
+
+  local positive_query, match_stritems = parsed.positive_query, stritems
+  if query_uses_ignorecase(positive_query) then
+    positive_query = lower_list(positive_query)
+    match_stritems = lower_list(stritems)
+  end
+
+  local all_inds = {}
+  for i = 1, #stritems do
+    all_inds[i] = i
+  end
+
+  local filtered_inds = vim
+    .iter(all_inds)
+    :fold(setmetatable({}, { __index = table }), function(acc, ind)
+      local stritem = stritems[ind]
+      local is_excluded = vim.iter(parsed.negatives):any(function(term)
+        if query_uses_ignorecase({ term }) then
+          return vim.fn.tolower(stritem):find(vim.fn.tolower(term), 1, true) ~= nil
+        end
+
+        return stritem:find(term, 1, true) ~= nil
+      end)
+      if not is_excluded then acc:insert(ind) end
+      return acc
+    end)
+
+  if #positive_query == 0 then return filtered_inds end
+  return pick.default_match(match_stritems, filtered_inds, positive_query)
+end
+
+M.show = function(bufnr, items, query)
+  local pick = require('mini.pick')
+  local parsed = M.parse_filter_query(query)
+  if #parsed.negatives == 0 then return pick.default_show(bufnr, items, query) end
+  return pick.default_show(bufnr, items, parsed.positive_query)
 end
 
 M.open_man = function(item, modifier)
@@ -225,6 +300,8 @@ M.picker = function(local_opts, opts)
         end, local_opts.apropos_cmd)
       end,
       preview = M.preview,
+      match = M.match,
+      show = M.show,
       choose = choose,
     },
   }, opts)
