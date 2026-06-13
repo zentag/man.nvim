@@ -149,22 +149,17 @@ end
 
 M.filter_sorter = function(sorter)
   local Sorter = require('telescope.sorters').Sorter
-  local opts = {
-    scoring_function = function(_, prompt, line, entry, cb_add, cb_filter)
-      local parsed = M.parse_filter_prompt(prompt)
+  return Sorter:new({
+    scoring_function = function(self, prompt, line, entry)
       if not M.matches_filter_prompt(line, prompt) then return -1 end
-      return sorter:scoring_function(parsed.positive_prompt, line, entry, cb_add, cb_filter)
+      local parsed = M.parse_filter_prompt(prompt)
+      return sorter:score(parsed.positive_prompt, line, entry)
     end,
-  }
-
-  if sorter.highlighter then
-    opts.highlighter = function(_, prompt, display)
+    highlighter = sorter.highlighter and function(self, prompt, display)
       local parsed = M.parse_filter_prompt(prompt)
       return sorter:highlighter(parsed.positive_prompt, display)
-    end
-  end
-
-  return Sorter:new(opts)
+    end or nil,
+  })
 end
 
 M.open_man = function(item, modifier)
